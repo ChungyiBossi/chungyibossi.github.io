@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>互動式技術規格標記工具</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            touch-action: none;
+        }
+        canvas {
+            image-rendering: -moz-crisp-edges;
+            image-rendering: -webkit-crisp-edges;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        .sidebar-btn {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem; /* 12px */
+            width: 100%;
+            padding: 0.625rem 0.75rem; /* 10px 12px */
+            border-radius: 0.375rem; /* 6px */
+            font-weight: 500;
+            color: #374151; /* text-gray-700 */
+            transition: background-color 0.2s, color 0.2s;
+        }
+        .sidebar-btn:hover {
+            background-color: #e5e7eb; /* bg-gray-200 */
+        }
+        .sidebar-btn.active {
+            background-color: #3b82f6; /* bg-blue-600 */
+            color: white;
+        }
+        .sidebar-btn svg {
+            width: 1.25rem; /* 20px */
+            height: 1.25rem; /* 20px */
+        }
+        #upload-container {
+            border: 3px dashed #9ca3af;
+            background-color: #f9fafb;
+        }
+        .modal {
+            transition: opacity 0.2s ease-in-out;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            width: 3rem;
+            height: 3rem;
+            animation: spin 1s linear infinite;
+        }
+        #copy-notification {
+            pointer-events: none;
+            transform: translate(-50%, -120%);
+            z-index: 100;
+        }
+        body.preview-mode {
+            overflow: hidden;
+        }
+        body.preview-mode .preview-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: rgba(0, 0, 0, 0.8);
+            z-index: 50;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+            cursor: pointer;
+        }
+        body.preview-mode .preview-overlay #canvas {
+            max-width: 95vw;
+            max-height: 95vh;
+            object-fit: contain;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            border-radius: 0.5rem;
+        }
+        /* Image Tray Styles */
+        #image-tray-wrapper {
+            background-color: #e5e7eb; /* bg-gray-200 */
+        }
+        .thumbnail {
+            border: 2px solid transparent;
+            transition: all 0.2s ease-in-out;
+        }
+        .thumbnail.active {
+            border-color: #3b82f6; /* border-blue-600 */
+            box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+        }
+        /* Annotation List Styles */
+        #annotation-list input {
+            background-color: transparent;
+            border: none;
+            border-bottom: 1px solid #d1d5db; /* gray-300 */
+            width: 100%;
+        }
+        #annotation-list input:focus {
+            outline: none;
+            border-bottom: 2px solid #3b82f6; /* blue-600 */
+        }
+        /* Context Menu */
+        #context-menu {
+            min-width: 150px;
+        }
+
+        /* Custom Styles for Zoom Annotation Handle */
+        .zoom-handle {
+            position: absolute;
+            background-color: #3b82f6;
+            border: 1px solid white;
+            border-radius: 50%;
+            width: 12px;
+            height: 12px;
+            cursor: grab;
+            z-index: 10;
+        }
+        .zoom-handle:hover {
+            transform: scale(1.2);
+        }
+    </style>
+</head>
+<body class="bg-gray-200">
+
+    <div class="flex h-screen bg-white">
+        <!-- Left Sidebar (Tools) -->
+        <aside id="toolbar" class="w-64 bg-gray-50 border-r border-gray-200 flex flex-col p-4 space-y-4 flex-shrink-0">
+            <h1 class="text-xl font-bold text-gray-800 px-2">標記工具</h1>
+            
+            <div class="flex-grow space-y-6 overflow-y-auto">
+                <!-- Tools Group -->
+                <div>
+                    <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 px-2">工具</h2>
+                    <div class="space-y-1">
+                        <button id="measure-tool" class="sidebar-btn" title="測量尺寸 (Z)">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="17" y1="21" x2="17" y2="3"></line><line x1="7" y1="21" x2="7" y2="3"></line><line x1="21" y1="12" x2="3" y2="12"></line></svg>
+                            <span>測量 (Z)</span>
+                        </button>
+                        <button id="arrow-tool" class="sidebar-btn" title="箭頭標記 (V)">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                            <span>箭頭 (V)</span>
+                        </button>
+                         <button id="text-tool" class="sidebar-btn" title="文字註釋 (T)">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+                            <span>註釋 (T)</span>
+                        </button>
+                        <button id="zoom-annotation-tool" class="sidebar-btn" title="新增放大註釋 (A)">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="3" y="3" width="12" height="12" rx="2"></rect>
+                                <circle cx="8" cy="8" r="2"></circle>
+                                <line x1="9.5" y1="9.5" x2="12" y2="12"></line>
+                                <path d="M8 15v4l-2-2h4l-2 2v-4"></path>
+                            </svg>
+                            <span>放大註釋 (A)</span>
+                        </button>
+                         <button id="select-tool" class="sidebar-btn active" title="選取/移動 (S)">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+                            <span>選取/移動 (S)</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Settings Group -->
+                <div>
+                    <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 px-2">設定</h2>
+                    <div class="space-y-3 px-2">
+                         <div class="flex items-center justify-between">
+                            <label for="color-picker" class="text-sm font-medium text-gray-700">顏色</label>
+                            <input type="color" id="color-picker" value="#FF0000" class="w-8 h-8 rounded-md border-gray-300 cursor-pointer">
+                        </div>
+                         <div class="space-y-1">
+                             <label for="line-width" class="text-sm font-medium text-gray-700">線寬: <span id="line-width-value" class="font-bold">3</span></label>
+                             <input type="range" id="line-width" min="1" max="20" value="3" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                         </div>
+                        <div class="space-y-1">
+                            <label class="text-sm font-medium text-gray-700">單位</label>
+                            <div class="flex w-full">
+                                <button id="unit-cm" class="w-1/2 py-1 px-2 border border-gray-300 rounded-l-md text-sm bg-blue-500 text-white">cm</button>
+                                <button id="unit-mm" class="w-1/2 py-1 px-2 border border-gray-300 border-l-0 rounded-r-md text-sm">mm</button>
+                            </div>
+                        </div>
+                         <div class="space-y-1">
+                            <label for="scale-input" class="text-sm font-medium text-gray-700">圖片比例 (Pixel/Unit)</label>
+                            <input type="number" id="scale-input" value="100" min="1" class="w-full p-2 border border-gray-300 rounded-md text-sm">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- AI Group -->
+                 <div>
+                    <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 px-2">智慧功能</h2>
+                    <button id="gemini-generate" class="sidebar-btn bg-purple-100 text-purple-800 hover:bg-purple-200" title="使用 AI 產生規格描述">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6.364 6.364 0 0 0 9 9 9 9 0 1 1-9-9Z"></path></svg>
+                        <span>產生描述</span>
+                    </button>
+                 </div>
+            </div>
+
+            <!-- Actions Group -->
+            <div class="space-y-1">
+                <hr class="border-gray-200">
+                 <button id="export-btn" class="sidebar-btn" title="導出產品製單">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    <span>導出製單</span>
+                </button>
+                <button id="copy-canvas" class="sidebar-btn" title="複製圖片到剪貼簿">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    <span>複製圖面</span>
+                </button>
+                 <button id="preview-tool" class="sidebar-btn" title="預覽模式">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+                    <span>預覽模式</span>
+                </button>
+                <button id="clear-canvas" class="sidebar-btn text-red-600 hover:bg-red-100" title="清除所有標記">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    <span>清除標記</span>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="flex-1 flex flex-col relative overflow-hidden bg-gray-100">
+            <!-- Image Tray (Top) -->
+            <div id="image-tray-wrapper" class="flex-shrink-0 bg-gray-200 border-b border-gray-300 p-2 flex items-center overflow-x-auto space-x-2">
+                <button id="add-image-btn" class="flex-shrink-0 w-20 h-20 border-2 border-dashed border-gray-400 rounded-lg flex items-center justify-center text-gray-600 hover:bg-gray-100 transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+                </button>
+                <input type="file" id="image-upload-input" accept="image/*" multiple class="hidden">
+                <div id="image-thumbnails" class="flex space-x-2">
+                    <!-- Image thumbnails will be inserted here -->
+                </div>
+            </div>
+
+            <!-- Canvas Container -->
+            <div id="canvas-container" class="flex-grow flex items-center justify-center relative overflow-auto p-4 bg-gray-100">
+                <div id="upload-container" class="absolute inset-0 flex flex-col items-center justify-center bg-gray-50 text-gray-600 rounded-lg m-4" style="z-index: 10;" title="點擊或拖曳圖片到此處上傳">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 mb-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 0115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                    <p class="text-lg font-medium">拖曳圖片到此處，或 <span class="text-blue-600 cursor-pointer">點擊上傳</span></p>
+                    <p class="text-sm text-gray-500 mt-1">支援 PNG, JPG, GIF</p>
+                </div>
+
+                <div class="relative max-w-full max-h-full overflow-hidden shadow-lg rounded-lg bg-white" id="image-display-wrapper">
+                    <canvas id="canvas" class="block"></canvas>
+                    <!-- For text annotation input -->
+                    <input type="text" id="annotation-text-input" class="absolute p-1 border rounded shadow-md bg-white hidden" style="font-family: 'Noto Sans TC', sans-serif; min-width: 100px;">
+                </div>
+            </div>
+
+            <!-- Preview Overlay -->
+            <div class="preview-overlay hidden" id="preview-overlay">
+                 <canvas id="preview-canvas" class="block"></canvas>
+            </div>
+
+            <!-- Copy Notification -->
+            <div id="copy-notification" class="fixed top-0 left-1/2 p-3 bg-green-500 text-white rounded-md shadow-lg hidden">
+                圖片已複製到剪貼簿！
+            </div>
+
+            <!-- Loading Modal -->
+            <div id="loading-modal" class="fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-50 hidden modal">
+                <div class="spinner"></div>
+            </div>
+
+             <!-- Context Menu -->
+            <div id="context-menu" class="absolute bg-white rounded-md shadow-lg p-1 hidden z-40">
+                <button class="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-md" id="context-delete">刪除</button>
+                <button class="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-md" id="context-edit" style="display: none;">編輯</button>
+            </div>
+        </main>
+
+        <!-- Right Sidebar (Annotations List) -->
+        <aside class="w-80 bg-gray-50 border-l border-gray-200 flex flex-col p-4 space-y-4 flex-shrink-0">
+            <h2 class="text-xl font-bold text-gray-800">標註列表</h2>
+            <div id="annotation-list" class="flex-grow space-y-3 overflow-y-auto">
+                <p id="no-annotations-message" class="text-gray-500 text-sm hidden">此處將顯示所有標註項目。</p>
+            </div>
+            <div class="flex flex-col space-y-2 pt-4 border-t border-gray-200">
+                <h3 class="text-md font-semibold text-gray-800">產出規格描述</h3>
+                <textarea id="generated-description" rows="6" class="w-full p-2 border border-gray-300 rounded-md text-sm resize-y" placeholder="點擊 '產生描述' 按鈕來生成內容..."></textarea>
+                <button id="copy-description-btn" class="sidebar-btn bg-blue-500 text-white hover:bg-blue-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    <span>複製描述</span>
+                </button>
+            </div>
+        </aside>
+    </div>
+
+    <!-- The JS code will be inserted here -->
+    <script src="script.js"></script> 
+
+</body>
+</html>
