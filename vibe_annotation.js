@@ -211,7 +211,8 @@ function redraw() {
     ctx.drawImage(activeImage, 0, 0, canvas.width, canvas.height);
     
     const annotations = getActiveAnnotations();
-    const ratio = canvas.width / activeImage.naturalWidth;
+    const ratioX = canvas.width / activeImage.naturalWidth;
+    const ratioY = canvas.height / activeImage.naturalHeight;
     
     annotations.forEach((ann, index) => {
             if (ann.type === 'pinned_zoom') {
@@ -225,31 +226,42 @@ function redraw() {
                 height: sourceHeight
             };
 
-            const canvasPos = {x: ann.pos.x * ratio, y: ann.pos.y * ratio};
-            const canvasSize = ann.size * ratio;
+            const canvasPos = { x: ann.pos.x * ratioX, y: ann.pos.y * ratioY };
+            const canvasSizeX = ann.size * ratioX;
+            const canvasSizeY = ann.size * ratioY;
             ctx.save();
             ctx.imageSmoothingEnabled = false; // For sharper zoom
             ctx.beginPath();
-            ctx.arc(canvasPos.x, canvasPos.y, canvasSize / 2, 0, Math.PI * 2);
+            // Draw ellipse to correctly represent non-uniform scaling
+            if (typeof ctx.ellipse === 'function') {
+                ctx.ellipse(canvasPos.x, canvasPos.y, canvasSizeX / 2, canvasSizeY / 2, 0, 0, Math.PI * 2);
+            } else {
+                // fallback to circle using average ratio
+                const avgRadius = (canvasSizeX + canvasSizeY) / 4;
+                ctx.arc(canvasPos.x, canvasPos.y, avgRadius, 0, Math.PI * 2);
+            }
             ctx.strokeStyle = index === selectedAnnotationIndex ? '#0ea5e9' : '#3b82f6';
-            ctx.lineWidth = index === selectedAnnotationIndex ? 6 * ratio : 4 * ratio;
+            const scaledLineBase = Math.min(ratioX, ratioY);
+            ctx.lineWidth = (index === selectedAnnotationIndex ? 6 : 4) * scaledLineBase;
             ctx.fillStyle = 'white';
             ctx.fill();
             ctx.stroke();
             ctx.clip();
-            ctx.drawImage(activeImage,
+            ctx.drawImage(
+                activeImage,
                 ann.source.x, ann.source.y, ann.source.width, ann.source.height,
-                canvasPos.x - canvasSize / 2, canvasPos.y - canvasSize / 2, canvasSize * ann.zoom, canvasSize * ann.zoom);
+                canvasPos.x - canvasSizeX / 2, canvasPos.y - canvasSizeY / 2, canvasSizeX, canvasSizeY
+            );
             ctx.restore();
-            
+
             if (index === selectedAnnotationIndex) {
-                const handlePos = getResizeHandle(ann, ratio);
+                const handlePos = getResizeHandle(ann, Math.min(ratioX, ratioY));
                 ctx.beginPath();
-                ctx.arc(handlePos.x, handlePos.y, 8 * ratio, 0, Math.PI * 2);
+                ctx.arc(handlePos.x, handlePos.y, 8 * Math.min(ratioX, ratioY), 0, Math.PI * 2);
                 ctx.fillStyle = '#3b82f6';
                 ctx.fill();
             }
-            drawAnnotationLabel(ann, index, canvasPos, ann.color, ratio);
+            drawAnnotationLabel(ann, index, canvasPos, ann.color, Math.min(ratioX, ratioY));
 
         } else if (ann.type === 'measure' || ann.type === 'arrow' || ann.type === 'text') {
             const start = ann.start ? {x: ann.start.x * ratio, y: ann.start.y * ratio} : null;
@@ -420,7 +432,7 @@ function createZoomAnnotation(canvasClickPos) {
             text: text || "放大細節",
             pos: pos,
             size: initialSize,
-            zoom: 3,
+            zoom: 2,
             color: colorPicker.value,
             source: {} // Will be calculated dynamically in redraw
         });
@@ -800,17 +812,20 @@ async function generateTechPackDescription() {
 }
 
 // --- Coordinate Transformation Functions ---
+// Use separate X/Y ratios to be robust against any non-uniform sizing
 const getCanvasPos = (originalPos) => {
     const activeImage = getActiveImage();
     if (!activeImage) return originalPos;
-    const ratio = canvas.width / activeImage.naturalWidth;
-    return { x: originalPos.x * ratio, y: originalPos.y * ratio };
+    const ratioX = canvas.width / activeImage.naturalWidth;
+    const ratioY = canvas.height / activeImage.naturalHeight;
+    return { x: originalPos.x * ratioX, y: originalPos.y * ratioY };
 };
 const getOriginalPos = (canvasPos) => {
     const activeImage = getActiveImage();
     if (!activeImage) return canvasPos;
-    const ratio = canvas.width / activeImage.naturalWidth;
-    return { x: canvasPos.x / ratio, y: canvasPos.y / ratio };
+    const ratioX = canvas.width / activeImage.naturalWidth;
+    const ratioY = canvas.height / activeImage.naturalHeight;
+    return { x: canvasPos.x / ratioX, y: canvasPos.y / ratioY };
 };
 
 // --- Multi-Image State Management ---
@@ -1089,14 +1104,16 @@ canvas.addEventListener('mousedown', (e) => {
 
     // If no creation tool is active, check for interactions.
     const annotations = getActiveAnnotations();
-    const ratio = getActiveImage() ? canvas.width / getActiveImage().naturalWidth : 1;
+    const activeImg = getActiveImage();
+    const ratioX = activeImg ? canvas.width / activeImg.naturalWidth : 1;
+    const ratioY = activeImg ? canvas.height / activeImg.naturalHeight : 1;
     
     // Check for resize handle hit on a selected annotation
     if (selectedAnnotationIndex !== -1 && annotations[selectedAnnotationIndex].type === 'pinned_zoom') {
-        const handlePos = getResizeHandle(annotations[selectedAnnotationIndex], ratio);
-        const dx = pos.x - handlePos.x;
-        const dy = pos.y - handlePos.y;
-        if (Math.sqrt(dx*dx + dy*dy) < 8 * ratio) {
+        const handlePosCanvas = getResizeHandle(annotations[selectedAnnotationIndex], Math.min(ratioX, ratioY));
+        const dx = pos.x - handlePosCanvas.x;
+        const dy = pos.y - handlePosCanvas.y;
+        if (Math.sqrt(dx*dx + dy*dy) < 8 * Math.min(ratioX, ratioY)) {
             isResizing = true;
             return;
         }
@@ -1107,11 +1124,14 @@ canvas.addEventListener('mousedown', (e) => {
     for (let i = annotations.length - 1; i >= 0; i--) {
         const ann = annotations[i];
         if (ann.type === 'pinned_zoom') {
-            const canvasPos = { x: ann.pos.x * ratio, y: ann.pos.y * ratio };
-            const canvasSize = ann.size * ratio;
+            const canvasPos = { x: ann.pos.x * ratioX, y: ann.pos.y * ratioY };
+            // Use average of scaled radii to determine hit radius
+            const radiusX = (ann.size * ratioX) / 2;
+            const radiusY = (ann.size * ratioY) / 2;
+            const avgRadius = (radiusX + radiusY) / 2;
             const dx = pos.x - canvasPos.x;
             const dy = pos.y - canvasPos.y;
-            if (Math.sqrt(dx*dx + dy*dy) < canvasSize / 2) {
+            if (Math.sqrt(dx*dx + dy*dy) < avgRadius) {
                 selectedAnnotationIndex = i;
                 hit = true;
                 break;
@@ -1145,11 +1165,16 @@ canvas.addEventListener('mousemove', (e) => {
 
     if (isResizing && selectedAnnotationIndex !== -1) {
         const ann = getActiveAnnotations()[selectedAnnotationIndex];
-        const annCanvasPos = { x: ann.pos.x * (canvas.width / getActiveImage().naturalWidth), y: ann.pos.y * (canvas.width / getActiveImage().naturalWidth) };
+        const activeImg = getActiveImage();
+        const ratioX = activeImg ? canvas.width / activeImg.naturalWidth : 1;
+        const ratioY = activeImg ? canvas.height / activeImg.naturalHeight : 1;
+        const annCanvasPos = { x: ann.pos.x * ratioX, y: ann.pos.y * ratioY };
         const dx = lastMousePos.x - annCanvasPos.x;
         const dy = lastMousePos.y - annCanvasPos.y;
         const newRadius = Math.sqrt(dx*dx + dy*dy);
-        ann.size = (newRadius * 2) / (canvas.width / getActiveImage().naturalWidth);
+        // Convert canvas radius back to original image size using average ratio
+        const avgRatio = (ratioX + ratioY) / 2;
+        ann.size = (newRadius * 2) / avgRatio;
         redraw();
         return;
     }
